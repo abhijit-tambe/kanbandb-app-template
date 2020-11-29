@@ -4,7 +4,7 @@ import VerticalPartition from "../../components/VerticalPartition/VerticalPartit
 import "./Board.css";
 import KabanService from "../../services/API_KabanDB";
 import AddCard from "../../components/AddCard/AddCard";
-import DeleteCard from "../../components/DeleteCard/DeleteCard";
+import Modal from "../../components/Modal/Modal";
 
 export default class Board extends Component {
   constructor(props) {
@@ -15,16 +15,13 @@ export default class Board extends Component {
       DONE: [],
       db: null,
       node: null,
-      addCard: true,
-      deleteCard: false,
       input: "",
+      options: true,
+      modalView: false,
+      currentName: "",
+      currentDescription: "",
+      currentId: "",
     };
-    this.update = this.update.bind(this);
-    this.handleDragStartCard = this.handleDragStartCard.bind(this);
-    this.handleDropCard = this.handleDropCard.bind(this);
-    this.handleChange = this.handleChange.bind(this);
-    this.handleClick = this.handleClick.bind(this);
-    this.handleDropDeleteCard = this.handleDropDeleteCard.bind(this);
   }
 
   async componentDidMount() {
@@ -39,6 +36,7 @@ export default class Board extends Component {
         DONE: await db.getCardsByStatusCodes(["DONE"]),
         db: db,
       });
+      console.log(this.state);
     } catch (err) {
       console.log(err.message);
     }
@@ -48,41 +46,15 @@ export default class Board extends Component {
     console.log("up");
   }
 
-  async update() {
-    console.log("update");
-    try {
-      let data = await this.state.db.getCards();
-      console.log("data", data);
-      if (data.length >= 1) {
-        let a = await this.state.db.getCardsByStatusCodes(["TODO"]);
-        let b = await this.state.db.getCardsByStatusCodes(["IN_PROGRESS"]);
-        let c = await this.state.db.getCardsByStatusCodes(["DONE"]);
-
-        this.setState({
-          ...this.state,
-          TODO:
-            a.length > 2 ? a.sort((a, b) => a.lastUpdated - b.lastUpdated) : a,
-          IN_PROGRESS:
-            b.length > 2 ? b.sort((a, b) => a.lastUpdated - b.lastUpdated) : b,
-          DONE:
-            c.length > 2 ? c.sort((a, b) => a.lastUpdated - b.lastUpdated) : c,
-        });
-        console.log(this.state);
-      }
-    } catch (err) {
-      console.log(err.message);
-    }
-  }
-
   handleDragStartCard = async (e, id) => {
     e.persist();
     console.log("event target", e.target);
     this.setState({
       ...this.state,
       node: e.target,
-      addCard: false,
-      deleteCard: true,
+      options: false,
     });
+    console.log(this.state);
     setTimeout(() => {
       e.target.style.display = "none";
     }, 0);
@@ -91,21 +63,25 @@ export default class Board extends Component {
   };
 
   handleDropCard = async (e, status) => {
+    e.persist();
     try {
       let id = e.dataTransfer.getData("id");
-      e.persist();
-      let item = await this.state.db.getCardById(e.dataTransfer.getData("id"));
+      let item = await this.state.db.getCardById(id);
       console.log("itemData", item);
       let oldStatus = item.status;
       this.setState({
         ...this.state,
-        addCard: true,
-        deleteCard: false,
+        options: true,
       });
+
       if (oldStatus !== status) {
         let update = await this.state.db.updateCardById(id, { status });
-        console.log("update", update);
-        this.update();
+        let updatedData = await this.state.db.getCardById(id);
+        console.log("object", update, updatedData);
+        if (update) {
+          this.removeItem(oldStatus, id);
+          this.addItem(status, updatedData);
+        }
       } else {
         console.log("not updated", e.target);
         this.state.node.style.display = "flex";
@@ -115,7 +91,7 @@ export default class Board extends Component {
     }
   };
 
-  handleChange = (e) => {
+  handleChangeInput = (e) => {
     let data = e.target.value;
     this.setState({
       ...this.state,
@@ -123,7 +99,7 @@ export default class Board extends Component {
     });
   };
 
-  handleClick = async (e) => {
+  handleAddCard = async (e) => {
     try {
       let inputData = this.state.input;
       if (
@@ -133,34 +109,212 @@ export default class Board extends Component {
       ) {
         let data = this.state.input.split(":").map((str) => str.trim());
         console.log(data);
-        await this.state.db.addCard({
-          name: data[0],
-          description: data[1],
-          status: "TODO",
-        });
         this.setState({
           ...this.state,
           input: "",
         });
-        this.update();
+        let addedDataId = await this.state.db.addCard({
+          name: data[0],
+          description: data[1],
+          status: "TODO",
+        });
+
+        const newData = await this.state.db.getCardById(addedDataId);
+        console.log("dataadded", newData);
+
+        if (newData) {
+          this.addItem("TODO", newData);
+        } else {
+          alert("error adding new Card");
+        }
+      } else {
+        alert("provide a valid input minimum 3 charactes separated with : ");
       }
     } catch (err) {
       console.log(err.message);
     }
   };
 
-  handleDropDeleteCard = async (e, del) => {
+  handleAction = async (e, actionName, id, status, name, description) => {
+    console.log("handle action", e, actionName, id, status, name, description);
     try {
-      console.log(e, del);
-      let id = e.dataTransfer.getData("id");
-      let s = await this.state.db.deleteCardById(id);
-      console.log(id, s);
-      this.setState({
-        ...this.state,
-        addCard: true,
-        deleteCard: false,
-      });
-      this.update();
+      if (actionName === "Edit") {
+        this.setState({
+          ...this.state,
+          modalView: true,
+          currentName: name,
+          currentDescription: description,
+          currentId: id,
+        });
+      } else if (actionName === "X") {
+        const deleted = await this.state.db.deleteCardById(id);
+        if (deleted) {
+          this.removeItem(status, id);
+        }
+        console.log(id, deleted, this.state);
+        console.log("from db", await this.state.db.getCards());
+      } else {
+        console.log("card action error");
+      }
+    } catch (err) {
+      console.log(err.message);
+    }
+  };
+
+  removeItem = (oldStatus, id) => {
+    switch (oldStatus) {
+      case "TODO":
+        this.setState({
+          ...this.state,
+          TODO: this.state.TODO.filter((x) => x.id !== id),
+        });
+        break;
+      case "IN_PROGRESS":
+        this.setState({
+          ...this.state,
+          IN_PROGRESS: this.state.IN_PROGRESS.filter((x) => x.id !== id),
+        });
+
+        break;
+      case "DONE":
+        this.setState({
+          ...this.state,
+          DONE: this.state.DONE.filter((x) => x.id !== id),
+        });
+        break;
+      default:
+        return;
+    }
+    return;
+  };
+
+  addItem = (status, updatedData) => {
+    switch (status) {
+      case "TODO":
+        this.setState({
+          ...this.state,
+          TODO: [...this.state.TODO, updatedData],
+        });
+        break;
+      case "IN_PROGRESS":
+        this.setState({
+          ...this.state,
+          IN_PROGRESS: [...this.state.IN_PROGRESS, updatedData],
+        });
+        break;
+      case "DONE":
+        this.setState({
+          ...this.state,
+          DONE: [...this.state.DONE, updatedData],
+        });
+        break;
+      default:
+        return;
+    }
+
+    return;
+  };
+
+  updateItem = (status, id, data) => {
+    console.log("update item reducer", status, id, data);
+    switch (status) {
+      case "TODO":
+        this.setState({
+          ...this.state,
+          TODO: this.state.TODO.map((x) => {
+            if (x.id === id) {
+              return data;
+            } else {
+              return x;
+            }
+          }),
+        });
+        break;
+      case "IN_PROGRESS":
+        this.setState({
+          ...this.state,
+          IN_PROGRESS: this.state.IN_PROGRESS.map((x) => {
+            if (x.id === id) {
+              return data;
+            } else {
+              return x;
+            }
+          }),
+        });
+        break;
+      case "DONE":
+        this.setState({
+          ...this.state,
+          DONE: this.state.DONE.map((x) => {
+            if (x.id === id) {
+              return data;
+            } else {
+              return x;
+            }
+          }),
+        });
+        break;
+      default:
+        return;
+    }
+    return;
+  };
+
+  handleCloseModal = () => {
+    this.setState({
+      ...this.state,
+      modalView: false,
+    });
+  };
+
+  handleSubmitModal = async (e) => {
+    e.preventDefault();
+    e.persist();
+
+    try {
+      const updatedName = e.target.name.value;
+      const updatedDescription = e.target.description.value;
+      console.log(updatedName, updatedDescription);
+      if (
+        updatedName &&
+        updatedDescription &&
+        (updatedName !== this.state.currentName ||
+          updatedDescription !== this.state.currentDescription)
+      ) {
+        const updateItem = await this.state.db.updateCardById(
+          this.state.currentId,
+          { name: updatedName, description: updatedDescription }
+        );
+        if (updateItem) {
+          const updatedItem = await this.state.db.getCardById(
+            this.state.currentId
+          );
+          console.log("db", updatedItem);
+          this.updateItem(
+            updatedItem.status,
+            this.state.currentId,
+            updatedItem
+          );
+        } else {
+          console.log("unable to update the values in database");
+        }
+        this.setState({
+          ...this.state,
+          currentName: "",
+          currentDescription: "",
+          currentId: "",
+          modalView: false,
+        });
+        console.log(this.state);
+        console.log(e.target.name.value);
+      } else if (
+        updatedName === this.state.currentName &&
+        updatedDescription === this.state.currentDescription
+      ) {
+        alert("enter different values to update");
+      } else {
+        alert("enter a valid input");
+      }
     } catch (err) {
       console.log(err.message);
     }
@@ -175,6 +329,8 @@ export default class Board extends Component {
           status={"TODO"}
           handleDragStart={this.handleDragStartCard}
           handleDrop={this.handleDropCard}
+          options={this.state.options}
+          handleAction={this.handleAction}
         />
 
         <VerticalPartition />
@@ -185,6 +341,8 @@ export default class Board extends Component {
           status={"IN_PROGRESS"}
           handleDragStart={this.handleDragStartCard}
           handleDrop={this.handleDropCard}
+          options={this.state.options}
+          handleAction={this.handleAction}
         />
 
         <VerticalPartition />
@@ -195,18 +353,24 @@ export default class Board extends Component {
           status={"DONE"}
           handleDragStart={this.handleDragStartCard}
           handleDrop={this.handleDropCard}
+          options={this.state.options}
+          handleAction={this.handleAction}
         />
 
         <AddCard
-          handleClick={this.handleClick}
-          handleChange={this.handleChange}
-          addCard={this.state.addCard}
+          handleClick={this.handleAddCard}
+          handleChangeInput={this.handleChangeInput}
           inputValue={this.state.input}
         />
-        <DeleteCard
-          handleDropDeleteCard={this.handleDropDeleteCard}
-          deleteCard={this.state.deleteCard}
-        />
+
+        {this.state.modalView && (
+          <Modal
+            handleCloseModal={this.handleCloseModal}
+            name={this.state.currentName}
+            description={this.state.currentDescription}
+            handleSubmitModal={this.handleSubmitModal}
+          />
+        )}
       </div>
     );
   }
